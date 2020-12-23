@@ -1,30 +1,30 @@
 #!/usr/bin/ruby -w
 # encoding: UTF-8
 
-require 'cgi'
 require 'open3'
+
+# Add MM_FANTASTICAL_DEBUG to the environment command and the tmpfile will not be deleted.
+debugMode = ENV['MM_FANTASTICAL_DEBUG'] == "1"
 
 # Create temporary file (don't use this execution style if user input is involved)
 tmpfilename = `mktemp -t add_input`.chop
 
-File.open(tmpfilename, "w+") do |tmpfile|
-  # First line contains subject
-  tmpfile.puts(ENV['MM_SUBJECT'])
-
-  # Second line contains message URL
-  tmpfile.puts("message://" + CGI::escape("<" + ENV['MM_MESSAGE_ID'] + ">"))
-
-  detect_path = ENV['MM_SUPPORT_PATH'] + "/bin/detect"
+File.open(tmpfilename, "w+") do |tmpfile|    
+  detect_path = ENV['MM_SUPPORT_PATH'] + "/bin/detect"    
   canonical = $stdin.read
+  tmpfile.puts("canonical: #{canonical}\n")  
   range_string = ENV['MM_SELECTED_RANGE']
   selection = ""
   if range_string.nil?
     stdin, stdout, stderr = Open3.popen3(detect_path)
-    stdin.puts canonical
+    stdin.puts canonical    
     stdin.close
-  
-    # Third line contains date (or is empty)
-    tmpfile.puts(stdout.read)
+
+    # I cannot figure out what black magic puts yyyy-mm-dd HH:MM:SS into stdout, but
+    # when Fantastical parses a sentence with a time, it infers the event is a meeting invite
+    # and complains that you have not specified any attendees.
+    selection = stdout.read
+    tmpfile.puts("selection: #{selection}\n")        
     stdout.close
     stderr.close
   else
@@ -32,15 +32,23 @@ File.open(tmpfilename, "w+") do |tmpfile|
     range = Integer(offset1)..Integer(offset2)
     selection = canonical[range]
     selection.gsub!("\n", ' ')
-    tmpfile.puts(selection)
+    tmpfile.puts("selection: #{selection}\n")
   end
 
-  # Output note
-  # tmpfile.puts canonical
+  sentence = URI.escape(ENV['MM_SUBJECT'] )
+  tmpfile.puts("sentence: #{sentence}\n")
+
+  note = URI.escape("#{canonical}\n\nDebug info:\nmessage://<" + ENV['MM_MESSAGE_ID'] + ">\ntmpfilename: file://#{tmpfilename}")
+
+  addImmediately = ENV['MM_FANTASTICAL_ADD_IMMEDIATELY']
+
+  # Use Fantastical 3 URL Handler as it's easier to debug
+  # https://flexibits.com/fantastical/help/integration-with-other-apps
+  fantasticalUrl = "x-fantastical3://parse?s=#{sentence}&n=#{note}&add=#{addImmediately}"
+
+  tmpfile.puts("Opening URL: #{fantasticalUrl}\n")
+
+  system("open", fantasticalUrl)
 end
 
-# Use AppleScript to communicate with the application
-system(ENV['MM_BUNDLE_SUPPORT'] + "/bin/create_event", tmpfilename)
-
-# Cleanup
-File.unlink(tmpfilename)
+File.unlink(tmpfilename) unless debugMode
